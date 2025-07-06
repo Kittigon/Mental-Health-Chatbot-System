@@ -114,6 +114,3 @@ def save_dass_result(user_id, d, a, s):
     cur.close()
     conn.close()
     return d_level, a_level, s_level
-
-
-
