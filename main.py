@@ -5,6 +5,13 @@ from question import DASS_21 , DASS_choices , summaryScore , save_dass_result
 from dotenv import load_dotenv
 import os
 import google.generativeai as genai
+from collections import deque
+import threading
+import time
+
+# เก็บข้อความที่ส่งมาติดๆ กัน
+user_message_buffer = {}
+user_timers = {}
 
 load_dotenv()
 
@@ -36,6 +43,54 @@ def reply_message(reply_token, message):
     }
     requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=body)
 
+def process_combined_messages(user_id, reply_token):
+    buffer = user_message_buffer.get(user_id, deque())
+
+    # รวมข้อความทั้งหมด ไม่จำกัดเวลา
+    combined_message = "\n".join([msg for msg, _ in buffer])
+
+    if not combined_message.strip():
+        return
+
+    # ล้าง buffer หลังใช้
+    user_message_buffer[user_id] = deque()
+
+    # ทำเหมือนเดิมจากโค้ดของคุณ
+    query_text = combined_message
+    print(f"Processing combined message: {query_text}")
+    retrieved_docs = query_postgresql(query_text)
+    context = "\n".join([doc[0] for doc in retrieved_docs]) if retrieved_docs else "ไม่มีข้อมูลที่เกี่ยวข้อง"
+
+    if user_id not in chat_histories:
+        chat_histories[user_id] = []
+
+    history_text = format_history(chat_histories[user_id])
+
+    prompt = (
+        "กรุณาตอบคำถามต่อไปนี้อย่างอบอุ่นและเข้าอกเข้าใจ\n"
+        "เน้นตอบตรงคำถามของผู้ใช้เป็นหลัก\n"
+        "หากจำเป็น ค่อยอ้างอิงจากประวัติการสนทนา หรือข้อมูลที่เกี่ยวข้อง\n\n"
+
+        f"คำถามของผู้ใช้:\n{query_text}\n\n"
+        f"บริบทเพิ่มเติม (จากฐานข้อมูล):\n{context}\n\n"
+        f"ประวัติการสนทนา:\n{history_text or 'ยังไม่มีบทสนทนา'}\n\n"
+
+        "กรุณาตอบในรูปแบบที่สุภาพ เป็นกันเอง และไม่ยาวเกินไป\n"
+        "หากคุณไม่แน่ใจในคำตอบ โปรดระบุว่าไม่แน่ใจอย่างสุภาพ"
+    )
+
+    model = genai.GenerativeModel("gemma-3-27b-it")  
+    response = model.generate_content([{"role": "user", "parts": [prompt]}])
+    reply_text = response.text.strip() or "ขออภัย ฉันไม่สามารถตอบคำถามนี้ได้ในตอนนี้ค่ะ"
+
+    # บันทึกประวัติ
+    chat_histories[user_id].append({"role": "user", "content": query_text})
+    chat_histories[user_id].append({"role": "assistant", "content": reply_text})
+    chat_histories[user_id] = chat_histories[user_id][-6:]
+
+    # ส่งกลับ
+    reply_message(reply_token, reply_text)
+
 @app.route("/webhook", methods=["POST"])
 def webhook():
     data = request.json
@@ -54,7 +109,7 @@ def webhook():
             if user_text.lower() in ["ยกเลิก" ,"ออก", "เลิกทำแบบประเมิน "]:
                 if user_id in user_states:
                     del user_states[user_id]
-                    reply_message(reply_token ,"คุณได้ยกเลิกการทำแบบประเมินแล้ว หากต้องการเริ่มใหม่ พิมพ์ว่า 'ทำแบบประเมิน' ครับ 😊")
+                    reply_message(reply_token ,"คุณได้ยกเลิกการทำแบบประเมินแล้ว หากต้องการเริ่มใหม่ พิมพ์ว่า 'ทำแบบประเมิน' ค่ะ 😊")
 
             if user_id in user_states:
                 state = user_states[user_id]
@@ -77,7 +132,7 @@ def webhook():
                         d, a, s = summary['D'], summary['A'], summary['S']
                         d_level, a_level, s_level = save_dass_result(user_id, d, a, s)
                         reply_message(reply_token, 
-    f"""🎉 คุณทำแบบประเมิน DASS-21 ครบแล้วครับ!
+    f"""🎉 คุณทำแบบประเมิน DASS-21 ครบแล้ว!
 
 📝 คะแนนรวมของคุณ:
 • ซึมเศร้า (Depression): {d} → **{d_level}**
@@ -85,7 +140,7 @@ def webhook():
 • เครียด (Stress): {s} → **{s_level}**
 
 หากคุณอยากพูดคุยหรือรับคำแนะนำเพิ่มเติม  
-สามารถพิมพ์ข้อความเข้ามาได้เลยนะครับ 😊"""
+สามารถพิมพ์ข้อความเข้ามาได้เลยนะคะ 😊"""
 )
 
                         del user_states[user_id]
@@ -141,22 +196,35 @@ def webhook():
             # llm_response = requests.post(llmEndpoint, json=llm_payload).json()
             # reply_text = llm_response.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
 
-            model = genai.GenerativeModel("gemini-1.5-flash")  # หรือ gemini-1.5-pro
-            response = model.generate_content([
-                {"role": "user", "parts": [prompt]}
-            ])
-            reply_text = response.text.strip()
+            # model = genai.GenerativeModel("gemma-3-27b-it")  
+            # response = model.generate_content([
+            #     {"role": "user", "parts": [prompt]}
+            # ])
+            # reply_text = response.text.strip()
 
-            # บันทึกประวัติใน session
-            chat_histories[user_id].append({"role": "user", "content": query_text})
-            chat_histories[user_id].append({"role": "assistant", "content": reply_text})
+            # # บันทึกประวัติใน session
+            # chat_histories[user_id].append({"role": "user", "content": query_text})
+            # chat_histories[user_id].append({"role": "assistant", "content": reply_text})
 
-            # จำกัดบทสนทนาไม่เกิน 10 ข้อความล่าสุด (5 user  5 assistant)
-            chat_histories[user_id] = chat_histories[user_id][-6:]
+            # # จำกัดบทสนทนาไม่เกิน 10 ข้อความล่าสุด (5 user  5 assistant)
+            # chat_histories[user_id] = chat_histories[user_id][-6:]
 
-            if not reply_text:
-                reply_text = "ขออภัย ฉันไม่สามารถตอบคำถามนี้ได้ในตอนนี้ค่ะ"
-            reply_message(reply_token, reply_text)
+            # if not reply_text:
+            #     reply_text = "ขออภัย ฉันไม่สามารถตอบคำถามนี้ได้ในตอนนี้ค่ะ"
+            # reply_message(reply_token, reply_text)
+
+            #  รวมข้อความก่อนส่งให้ LLM
+            if user_id not in user_message_buffer:
+                user_message_buffer[user_id] = deque()
+            user_message_buffer[user_id].append((user_text, time.time()))
+
+            # ถ้ามี timer รออยู่ ให้ยกเลิกก่อน
+            if user_id in user_timers and user_timers[user_id].is_alive():
+                user_timers[user_id].cancel()
+
+            # ตั้งเวลา 3 วินาที แล้วรวมข้อความทั้งหมดส่งไป LLM
+            user_timers[user_id] = threading.Timer(3.0, process_combined_messages, args=[user_id, reply_token])
+            user_timers[user_id].start()
 
     return jsonify({"status": "ok"})
 
