@@ -54,3 +54,5 @@ dist/
 *.swp
 *.swo
 *.tmp
+
+public/*.csv

@@ -1,13 +1,14 @@
 import psycopg2
+from dotenv import load_dotenv
+import os   
+
+# โหลดตัวแปรสภาพแวดล้อมจากไฟล์ .env
+load_dotenv()   
+
+Supabase_URL = os.getenv("DaTABASE_URL")
 
 # ## สร้างตาราง 
-# conn = psycopg2.connect(
-#     dbname = "mydb",
-#     user = "admin",
-#     password = "1234" ,
-#     host = "localhost" ,
-#     port  = "5432"
-# )
+# conn = psycopg2.connect(Supabase_URL)
 
 # cur = conn.cursor()
 # cur.execute("""
@@ -26,6 +27,8 @@ import psycopg2
 # conn.commit()
 # cur.close()
 # conn.close()
+
+# print("ตาราง Dass_21_result ถูกสร้างเรียบร้อยแล้ว")
 
 
 
@@ -96,13 +99,7 @@ def save_dass_result(user_id, d, a, s):
     d_level = get_level("D", d)
     a_level = get_level("A", a)
     s_level = get_level("S", s)
-    conn = psycopg2.connect(
-        dbname = "mydb",
-        user = "admin",
-        password = "1234" ,
-        host = "localhost" ,
-        port  = "5432"
-    )
+    conn = psycopg2.connect(Supabase_URL)
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO Dass_21_result (
