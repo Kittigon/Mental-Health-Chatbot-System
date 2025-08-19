@@ -12,7 +12,7 @@ load_dotenv()
 SupabaseUrl = os.getenv("DATABASE_URL")
 
 
-loader = CSVLoader("./public/Human_Like_Stress_Responses_V1+Data_Up.csv", encoding="utf-8")
+loader = CSVLoader("./public/Data.csv", encoding="utf-8")
 rows = loader.load()
 
 
