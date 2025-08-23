@@ -3,5 +3,4 @@ requests
 python-dotenv
 google-generativeai
 psycopg2-binary
-sentence-transformers
-waitress
+gunicorn

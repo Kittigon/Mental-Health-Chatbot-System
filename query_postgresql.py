@@ -1,53 +1,47 @@
-from sentence_transformers import SentenceTransformer
 import psycopg2
 from dotenv import load_dotenv
 import os
+import requests
+# import json
 
 # Load environment variables
 load_dotenv()   
 
 SupabaseUrl = os.getenv("DATABASE_URL")
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
 
-embedder = SentenceTransformer("BAAI/bge-m3")
+def get_embedding(text: str):
+    url = f"https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/run/@cf/baai/bge-m3"
+    headers = {"Authorization": f"Bearer {CLOUDFLARE_API_TOKEN}"}
+    data = {"text": [text]}
+    resp = requests.post(url, headers=headers, json=data)
+    resp.raise_for_status()
+    result = resp.json()
+    
+    return result["result"]["data"][0] 
 
-# # สร้างตาราง postgresql
-# conn = psycopg2.connect(SupabaseUrl)
-# cur = conn.cursor()
-
-# cur.execute("CREATE EXTENSION IF NOT EXISTS vector;")
-
-# cur.execute("""
-#     CREATE TABLE IF NOT EXISTS documents (
-#         id SERIAL PRIMARY KEY,
-#         content TEXT,
-#         embedding VECTOR(1024)
-#     );
-# """)
-
-# conn.commit()
-# cur.close()
-# conn.close()
-# print("Table created successfully.")
-
-def query_postgresql(query_text , k=3) :
+def query_postgresql(query_text, k=3):
     conn = psycopg2.connect(SupabaseUrl)
+    cur = conn.cursor()
 
-    query_embedding = embedder.encode(query_text).tolist
+    # แปลงข้อความเป็น embedding ผ่าน API
+    query_embedding = get_embedding(query_text)
+    query_embedding_str = "[" + ",".join(map(str, query_embedding)) + "]"
 
-    cur = conn.cursor()   
-    query_embedding_str = "[" + ",".join(map(str, query_embedding() )) + "]"
     sql_query = """
-        SELECT content , embedding <=> %s::vector AS similarity_score
+        SELECT content, embedding <=> %s::vector AS similarity_score
         FROM documents
         ORDER BY similarity_score ASC
-        LIMIT %s ;
+        LIMIT %s;
     """
-
-    cur.execute(sql_query , (query_embedding_str , k))
+    cur.execute(sql_query, (query_embedding_str, k))
     result = cur.fetchall()
+
     cur.close()
     conn.close()
     return result
+
 
 # result = query_postgresql("ศูนย์ให้คำปรึกษา มพ อยู่ที่ไหน")
 # print(result)
