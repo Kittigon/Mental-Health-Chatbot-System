@@ -37,6 +37,15 @@ def reply_message(reply_token, message):
     }
     requests.post("https://api.line.me/v2/bot/message/reply", headers=headers, json=body)
 
+def get_line_profile(user_id):
+    headers = {
+        "Authorization": f"Bearer {LineToken}"
+    }
+    url = f"https://api.line.me/v2/bot/profile/{user_id}"
+    res = requests.get(url, headers=headers)
+    if res.status_code == 200:
+        return res.json()  
+    return None
 
 @app.route("/webhook", methods=["POST"])
 def webhook():
@@ -46,6 +55,10 @@ def webhook():
             user_text = event["message"]["text"].strip()
             reply_token = event["replyToken"]
             user_id = event["source"]["userId"]
+
+            if user_text.lower() in ["นัดหมายผู้เชี่ยวชาญ", "จองคิว", "นัดหมาย"]:
+                reply_message(reply_token, "คุณสามารถนัดหมายผู้เชี่ยวชาญได้ที่นี่ค่ะ: https://appointment-website-nine.vercel.app/login")
+                return jsonify({"status": "ok"})
 
             if user_text.lower() in ["ทำแบบประเมิน" , "แบบประเมิน" , "เริ่มแบบประเมิน"]:
                 user_states[user_id] = {"index": 0, "scores": []}
@@ -77,7 +90,11 @@ def webhook():
                     else:
                         summary = summaryScore(state["scores"])
                         d, a, s = summary['D'], summary['A'], summary['S']
-                        d_level, a_level, s_level = save_dass_result(user_id, d, a, s)
+
+                        profile = get_line_profile(user_id)
+                        name = profile.get("displayName") if profile else "ผู้ใช้"
+                        # print(f"Message from {display_name} ({user_id}): {user_text}")
+                        d_level, a_level, s_level = save_dass_result(user_id , name , d, a, s)
                         reply_message(reply_token, 
     f"""🎉 คุณทำแบบประเมิน DASS-21 ครบแล้ว!
 

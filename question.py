@@ -15,6 +15,7 @@ Supabase_URL = os.getenv("DaTABASE_URL")
 #     CREATE TABLE Dass_21_result(
 #         id SERIAL PRIMARY KEY,
 #         user_id TEXT,
+#         name TEXT,
 #         depression_score INT,
 #         anxiety_score INT,
 #         stress_score INT,
@@ -95,7 +96,7 @@ def get_level(category, score):
         else: return "รุนแรงมาก"
 
 
-def save_dass_result(user_id, d, a, s):
+def save_dass_result(user_id,name, d, a, s):
     d_level = get_level("D", d)
     a_level = get_level("A", a)
     s_level = get_level("S", s)
@@ -103,10 +104,10 @@ def save_dass_result(user_id, d, a, s):
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO Dass_21_result (
-            user_id, depression_score, anxiety_score, stress_score,
+            user_id, name , depression_score, anxiety_score, stress_score,
             depression_level, anxiety_level, stress_level
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-    """, (user_id, d, a, s, d_level, a_level, s_level))
+        ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+    """, (user_id, name , d, a, s, d_level, a_level, s_level))
     conn.commit()
     cur.close()
     conn.close()
