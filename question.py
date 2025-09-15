@@ -5,8 +5,13 @@ import os
 # โหลดตัวแปรสภาพแวดล้อมจากไฟล์ .env
 load_dotenv()   
 
-Supabase_URL = os.getenv("DaTABASE_URL")
-
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")  
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_NAME = os.getenv("DB_NAME")
+CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
+CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN") 
 # ## สร้างตาราง 
 # conn = psycopg2.connect(Supabase_URL)
 
@@ -100,7 +105,13 @@ def save_dass_result(user_id,name, d, a, s):
     d_level = get_level("D", d)
     a_level = get_level("A", a)
     s_level = get_level("S", s)
-    conn = psycopg2.connect(Supabase_URL)
+    conn = psycopg2.connect(
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT    
+    )
     cur = conn.cursor()
     cur.execute("""
         INSERT INTO Dass_21_result (
