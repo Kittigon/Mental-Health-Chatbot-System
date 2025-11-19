@@ -5,5 +5,3 @@ google-generativeai
 psycopg2-binary
 gunicorn
 APScheduler
-datetime
-re
