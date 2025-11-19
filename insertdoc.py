@@ -9,7 +9,38 @@ import os
 # Load environment variables
 load_dotenv()
 
+#env
 SupabaseUrl = os.getenv("DATABASE_URL")
+DB_USER = os.getenv("DB_USER")
+DB_PASSWORD = os.getenv("DB_PASSWORD")  
+DB_HOST = os.getenv("DB_HOST")
+DB_PORT = os.getenv("DB_PORT")
+DB_NAME = os.getenv("DB_NAME")
+
+
+# # สร้างตาราง
+# conn = psycopg2.connect(
+#     dbname = DB_NAME,
+#     user = DB_USER,
+#     password = DB_PASSWORD ,
+#     host = DB_HOST ,
+#     port  = DB_PORT
+# )
+
+# cur = conn.cursor()
+# cur.execute("""
+#     CREATE TABLE documents (
+#     id SERIAL PRIMARY KEY,
+#     content TEXT,
+#     embedding vector(1024)  
+#     );
+# """)
+# conn.commit()
+# cur.close()
+# conn.close()
+
+# print("ตาราง Document ถูกสร้างเรียบร้อยแล้ว")
+
 
 
 loader = CSVLoader("./public/Data.csv", encoding="utf-8")
