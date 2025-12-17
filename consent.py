@@ -31,6 +31,7 @@ DB_NAME = os.getenv("DB_NAME")
 #             line_user_id VARCHAR(100) PRIMARY KEY,
 #             name TEXT,
 #             phone TEXT,
+#             student_id VARCHAR(20),
 #             consent BOOLEAN,
 #             granted_at TIMESTAMP,
 #             allow_greeting BOOLEAN DEFAULT FALSE,
@@ -99,11 +100,14 @@ def check_user_consent(user_id):
         cur.execute("SELECT consent FROM user_consent WHERE line_user_id=%s", (user_id,))
         row = cur.fetchone()
         cur.close()
-        db_pool.putconn(conn)  # คืน connection กลับ pool
-        return bool(row and row[0])
+        db_pool.putconn(conn)  
+
+        if row is None:
+            return None  
+        return bool(row[0])  
     except Exception as e:
         print("Error checking user consent:", e)
-        return False
+        return None
 
 
 # บันทึกการยินยอมลงฐานข้อมูล
@@ -140,23 +144,26 @@ def check_profile(user_id):
         return True
     return False
 
-def save_profile(user_id, name, phone):
-    conn = psycopg2.connect(
-        dbname=DB_NAME,
-        user=DB_USER,
-        password=DB_PASSWORD,
-        host=DB_HOST,
-        port=DB_PORT    
-    )
-    cur = conn.cursor()
-    cur.execute("""
-            UPDATE user_consent 
-            SET name = %s, phone = %s
-            WHERE line_user_id = %s
-        """, (name, phone, user_id))
-    conn.commit()
-    cur.close()
-    conn.close()
+def save_profile(line_user_id, name, phone, student_id):
+    try:
+        conn = db_pool.getconn()
+        cur = conn.cursor()
+
+        cur.execute("""
+            INSERT INTO user_consent (line_user_id, name, phone, student_id)
+            VALUES (%s, %s, %s, %s)
+            ON CONFLICT (line_user_id) DO UPDATE
+            SET name = EXCLUDED.name,
+                phone = EXCLUDED.phone,
+                student_id = EXCLUDED.student_id
+        """, (line_user_id, name, phone, student_id))
+
+        conn.commit()
+        cur.close()
+        db_pool.putconn(conn)
+
+    except Exception as e:
+        print("Save Profile Error:", e)
 
 def handle_consent(user_id, consent_value, reply_token):
     from main import reply_message  # เรียกใช้ฟังก์ชันส่งข้อความจาก main.py
@@ -171,7 +178,7 @@ def handle_consent(user_id, consent_value, reply_token):
         if row:
             last_consent, granted_at = row
             # cooldown 5 วินาที
-            if granted_at and (now - granted_at).total_seconds() < 5:
+            if granted_at and (now - granted_at).total_seconds() < 30:
                 reply_message(reply_token, "คุณกดเร็วเกินไป กรุณารอสักครู่")
                 cur.close()
                 db_pool.putconn(conn)
@@ -180,7 +187,7 @@ def handle_consent(user_id, consent_value, reply_token):
             # ถ้า consent_value เหมือนเดิม ไม่ต้อง update
             if last_consent == consent_value:
                 reply_message(reply_token,
-                            "คุณได้ให้ความยินยอมแล้วค่ะ" if consent_value else "คุณได้ยกเลิกความยินยอมแล้วค่ะ")
+                            "ท่านได้ให้ความยินยอมเรียบร้อยแล้ว" if consent_value else "ท่านได้เลือกปฎิเสธการยินยอม ระบบจะไม่เก็บข้อมูลส่วนบุคคลของท่าน")
                 cur.close()
                 db_pool.putconn(conn)
                 return
@@ -190,18 +197,16 @@ def handle_consent(user_id, consent_value, reply_token):
 
         if consent_value:
             reply_message(reply_token,
-                "ขอบคุณค่ะ คุณได้ยินยอมให้เก็บข้อมูลเรียบร้อยแล้ว\n\n"
+                "ท่านได้ยินยอมให้เก็บข้อมูลเรียบร้อยแล้ว\n\n"
                 "ต่อไปนี้คุณสามารถเลือกการตั้งค่าเพิ่มเติมได้เลย:\n\n"
-                "1) หากคุณต้องการให้แชตบอททักทายคุณโดยอัตโนมัติเมื่อเริ่มสนทนา\n"
-                "   กรุณาพิมพ์: ทักทายอัตโนมัติ  \n\n"
-                "2) หากคุณต้องการกำหนดโทนการสนทนาของแชตบอท (เช่น อบอุ่น, เป็นทางการ, สนุกสนาน)\n"
-                "   กรุณาพิมพ์: โทนเสียง\n\n"
-                "3) หากคุณต้องการทำแบบประเมิน DASS-21 เพื่อตรวจระดับสภาวะเครียด วิตกกังวล และซึมเศร้า\n"
-                "   กรุณาพิมพ์: ทำแบบประเมิน DASS-21\n\n"
-                "หรือว่าสามารถเลือกผ่าน เมนูด้านล่างได้เลย คุณสามารถเลือกทำข้อใดก่อนก็ได้ "
+                "1) หากคุณต้องการให้แชตบอตทักทายคุณโดยอัตโนมัติเมื่อเริ่มสนทนา\n"
+                "2) หากคุณต้องการกำหนดโทนการสนทนาของแชตบอต (เช่น อบอุ่น, เป็นทางการ, สนุกสนาน)\n"
+                "3) หากคุณต้องการทำแบบประเมิน DASS-21 เพื่อตรวจระดับสภาวะเครียด วิตกกังวล และซึมเศร้า\n\n"
+                
+                "สามารถเลือกผ่านการตั้งค่าแชตบอตเมนูด้านล่างได้เลย คุณสามารถเลือกทำข้อใดก่อนก็ได้ "
             )
         else:
-            reply_message(reply_token, "รับทราบค่ะ ระบบจะไม่เก็บข้อมูลส่วนบุคคลของคุณ และหากคุณต้องการใช้บริการต่อ คุณจะต้องให้ความยินยอมใหม่นะ")
+            reply_message(reply_token, "รับทราบ ระบบจะไม่เก็บข้อมูลส่วนบุคคลของคุณ และหากคุณต้องการให้ความยินยอมในการเก็บข้อมูล ท่านสามารถเปลี่ยนแปลงได้ทุกเมื่อ ที่เมนูด้านล่าง ")
 
         cur.close()
         db_pool.putconn(conn)
@@ -219,9 +224,9 @@ def handle_consent(user_id, consent_value, reply_token):
 #         reply_message(reply_token,
 #                 "ขอบคุณค่ะ คุณได้ยินยอมให้เก็บข้อมูลเรียบร้อยแล้ว\n\n"
 #                 "ต่อไปนี้คุณสามารถเลือกการตั้งค่าเพิ่มเติมได้เลย:\n\n"
-#                 "1) หากคุณต้องการให้แชตบอททักทายคุณโดยอัตโนมัติเมื่อเริ่มสนทนา\n"
+#                 "1) หากคุณต้องการให้แชตบอตทักทายคุณโดยอัตโนมัติเมื่อเริ่มสนทนา\n"
 #                 "   กรุณาพิมพ์: ทักทายอัตโนมัติ\n\n"
-#                 "2) หากคุณต้องการกำหนดโทนการสนทนาของแชตบอท (เช่น อบอุ่น, เป็นทางการ, สนุกสนาน)\n"
+#                 "2) หากคุณต้องการกำหนดโทนการสนทนาของแชตบอต (เช่น อบอุ่น, เป็นทางการ, สนุกสนาน)\n"
 #                 "   กรุณาพิมพ์: โทนเสียง\n\n"
 #                 "3) หากคุณต้องการทำแบบประเมิน DASS-21 เพื่อตรวจระดับสภาวะเครียด วิตกกังวล และซึมเศร้า\n"
 #                 "   กรุณาพิมพ์: ทำแบบประเมิน DASS-21\n\n"

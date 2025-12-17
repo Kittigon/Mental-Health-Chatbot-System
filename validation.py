@@ -38,8 +38,11 @@ def is_valid_phone(phone):
     # เบอร์ไทยเริ่มด้วย 0
     if not phone.startswith("0"):
         return False
-
     return True
+
+# ตรวจสอบรหัสนักศึกษา (สมมติว่าเป็นตัวเลข 8 หลัก)
+def is_valid_student_id(text):
+    return text.isdigit() and len(text) == 8
 
 
 # ตรวจสอบขความยาวของข้อความ

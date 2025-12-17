@@ -1,6 +1,7 @@
 import psycopg2
 from dotenv import load_dotenv
 import os   
+import requests
 
 # โหลดตัวแปรสภาพแวดล้อมจากไฟล์ .env
 load_dotenv()   
@@ -124,3 +125,32 @@ def save_dass_result(user_id, d, a, s):
     cur.close()
     conn.close()
     return d_level, a_level, s_level
+
+def get_overall_risk(d_level, a_level, s_level):
+    levels = [d_level, a_level, s_level]
+
+    if "รุนแรงมาก" in levels or "รุนแรง" in levels:
+        return "สูง"
+    elif "ปานกลาง" in levels:
+        return "ปานกลาง"
+    else:
+        return "ต่ำ"
+
+
+def send_notification( user_id, d_level, a_level, s_level):
+    overall = get_overall_risk(d_level, a_level, s_level)
+
+    title = f"ผลประเมิน DASS-21 ({overall})"
+    message = f"ระดับความเสี่ยงรวมของคุณ: {overall}\n"
+    message += f"- ซึมเศร้า (D): {d_level}\n"
+    message += f"- วิตกกังวล (A): {a_level}\n"
+    message += f"- ความเครียด (S): {s_level}"
+
+    payload = {
+        "line_user_id": user_id,  
+        "type": "DASS_RESULT",
+        "title": title,
+        "message": message
+    }
+
+    requests.post("https://appointment-website-nine.vercel.app/api/notifications/dass-21", json=payload)
