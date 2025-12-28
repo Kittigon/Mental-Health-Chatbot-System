@@ -153,4 +153,4 @@ def send_notification( user_id, d_level, a_level, s_level):
         "message": message
     }
 
-    requests.post("https://appointment-website-nine.vercel.app/api/notifications/dass-21", json=payload)
+    requests.post("https://appointment-website-nine.vercel.app/api/system/notifications/dass-21", json=payload)
