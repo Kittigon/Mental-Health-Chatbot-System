@@ -3,7 +3,7 @@ import hashlib
 import base64
 from flask import Flask, request, jsonify , abort
 import requests
-from query_postgresql import query_postgresql , query_qdrant
+from query_postgresql import query_postgresql 
 from question import DASS_21 , DASS_choices , summaryScore , save_dass_result , get_level , send_notification
 from dotenv import load_dotenv
 import os
