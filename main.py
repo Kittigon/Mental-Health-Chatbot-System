@@ -3,7 +3,7 @@ import hashlib
 import base64
 from flask import Flask, request, jsonify , abort
 import requests
-from query_postgresql import query_postgresql
+from query_postgresql import query_postgresql , query_qdrant
 from question import DASS_21 , DASS_choices , summaryScore , save_dass_result , get_level , send_notification
 from dotenv import load_dotenv
 import os
@@ -15,6 +15,10 @@ from history import load_chat_history , save_message_to_db
 from validation import  is_valid_fullname , is_valid_phone , is_valid_message_length , is_valid_student_id
 import time
 import json
+from tone_config import TONE_INSTRUCTIONS, DEFAULT_TONE
+from safety import detect_suicidal_risk , is_seek_professional_intent
+from prompt_builder import build_prompt
+# from zai import ZaiClient
 
 
 load_dotenv()
@@ -26,6 +30,12 @@ llmEndpoint = os.getenv("LOCAL_LLM_ENDPOINT")
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 OPENROUTER_API_KEY = os.getenv("OPEN_ROUTER_API_KEY")
 OPEN_ROUTER_API_URL = os.getenv("OPEN_ROUTER_API_URL")
+# ZAI_API_KEY = os.getenv("ZAI_API_KEY")
+# ZAI_API_URL = os.getenv("ZAI_API_URL")
+
+
+# zai_client = ZaiClient(api_key=ZAI_API_KEY)
+
 
 app = Flask(__name__)
 
@@ -408,26 +418,26 @@ def send_style_menu(reply_token):
 @app.route("/webhook", methods=["POST"])
 def webhook():
 
-    signature = request.headers.get('X-Line-Signature', '')
-    body = request.get_data(as_text=True) 
+    # signature = request.headers.get('X-Line-Signature', '')
+    # body = request.get_data(as_text=True) 
 
-    # print("Body:", body)
-    # print("Signature:", signature)
+    # # print("Body:", body)
+    # # print("Signature:", signature)
 
-    try:
-        hash = hmac.new(
-            LINE_CHANNEL_SECRET.encode('utf-8'),
-            body.encode('utf-8'),
-            hashlib.sha256
-        ).digest()
-        check_signature = base64.b64encode(hash).decode('utf-8')
+    # try:
+    #     hash = hmac.new(
+    #         LINE_CHANNEL_SECRET.encode('utf-8'),
+    #         body.encode('utf-8'),
+    #         hashlib.sha256
+    #     ).digest()
+    #     check_signature = base64.b64encode(hash).decode('utf-8')
 
-        if check_signature != signature:
-            print("Invalid Signature: Request ไม่ได้มาจาก LINE")
-            abort(400) # ตัดการทำงานทันที
-    except Exception as e:
-        print("Signature Error:", e)
-        abort(400)
+    #     if check_signature != signature:
+    #         print("Invalid Signature: Request ไม่ได้มาจาก LINE")
+    #         abort(400) # ตัดการทำงานทันที
+    # except Exception as e:
+    #     print("Signature Error:", e)
+    #     abort(400)
 
     try:
         data = request.json
@@ -471,7 +481,7 @@ def webhook():
                 return jsonify({"status": "ok"})
 
             if not is_valid_message_length(user_text):
-                reply_message(reply_token , "ข้อความของคุณยาวเกินไป กรุณาส่งข้อความที่มีความยาวไม่เกิน 200 ตัวอักษรค่ะ")
+                reply_message(reply_token , "ข้อความของคุณยาวเกินไป กรุณาส่งข้อความที่มีความยาวไม่เกิน 200 ตัวอักษร")
                 return jsonify({"status": "ok"})
             
             if user_text == "การตั้งค่า":
@@ -509,7 +519,7 @@ def webhook():
             if user_text in style_map:
                 english_style = style_map[user_text]
                 save_tone_to_db(user_id, english_style)
-                reply_message(reply_token, f"อัปเดตสไตล์การสนทนาแล้วค่ะ ({user_text}) ")
+                reply_message(reply_token, f"อัปเดตสไตล์การสนทนาแล้ว ({user_text}) ")
                 return "ok"
 
             
@@ -518,7 +528,7 @@ def webhook():
                 current_status = check_user_consent(user_id)
                 new_status = not current_status
                 handle_consent(user_id, new_status , reply_token)
-                reply_message(reply_token, "อัปเดตสถานะการยินยอมแล้วค่ะ")
+                reply_message(reply_token, "อัปเดตสถานะการยินยอมแล้ว")
                 return "ok"
             
             # สลับการตั้งค่าทักทายอัตโนมัติ
@@ -526,7 +536,7 @@ def webhook():
                 current_status = get_user_to_greet(user_id)
                 new_status = not current_status
                 save_greeting_permission(user_id, new_status)
-                reply_message(reply_token, "อัปเดตโหมดทักทายอัตโนมัติแล้วค่ะ")
+                reply_message(reply_token, "อัปเดตโหมดทักทายอัตโนมัติแล้ว")
                 return "ok"
 
 
@@ -581,11 +591,11 @@ def webhook():
             # การตั้งค่าโทนเสียง
             if user_text.lower() in ["ตั้งค่าโทน", "เปลี่ยนโทนเสียง", "เลือกโทน"]:
                 if not check_user_consent(user_id):
-                    reply_message(reply_token, "ก่อนอื่น คุณต้องให้ความยินยอมในการเก็บข้อมูลส่วนบุคคลก่อนค่ะ 🙏")
+                    reply_message(reply_token, "ก่อนอื่น คุณต้องให้ความยินยอมในการเก็บข้อมูลส่วนบุคคลก่อน 🙏")
                     return jsonify({"status": "ok"})
                 
                 reply_message(reply_token, 
-                        "กรุณาเลือกโทนภาษาที่ต้องการให้ฉันพูดด้วยค่ะ\n\n"
+                        "กรุณาเลือกโทนภาษาที่ต้องการให้ฉันพูดด้วย\n\n"
                         "1. ทางการ\n"
                         "2. กึ่งทางการ\n"
                         "3. เป็นกันเอง\n"
@@ -616,40 +626,26 @@ def webhook():
                     selected_tone = tone_map[user_text]
                     selected_tone_name = tone_name_map[user_text]
                     save_tone_to_db(user_id, selected_tone)
-                    reply_message(reply_token, f"ตั้งค่าโทนเสียงเป็น '{selected_tone_name}' เรียบร้อยแล้วค่ะ ")
+                    reply_message(reply_token, f"ตั้งค่าโทนเสียงเป็น '{selected_tone_name}' เรียบร้อยแล้ว ")
                     user_states[user_id].pop("set_tone", None)
                 else:
-                    reply_message(reply_token, "กรุณาพิมพ์หมายเลข 1 ถึง 5 เพื่อเลือกโทนภาษาค่ะ ")
+                    reply_message(reply_token, "กรุณาพิมพ์หมายเลข 1 ถึง 5 เพื่อเลือกโทนภาษา ")
                 return jsonify({"status": "ok"})
 
-            tone = get_tone_from_db(user_id)
+            tone = get_tone_from_db(user_id) or DEFAULT_TONE
 
-            if tone == "formal":
-                tone_instruction = (
-                    "พูดด้วยภาษาที่สุภาพมาก เหมือนผู้เชี่ยวชาญด้านสุขภาพจิต ใช้ประโยคเต็มและคำลงท้ายค่ะ/ครับ"
-                )
-            elif tone == "semi_formal":
-                tone_instruction = (
-                    "ใช้ภาษาที่สุภาพแต่เป็นกันเอง เหมาะสำหรับการให้คำปรึกษาทั่วไป มีความอบอุ่นและน่าเชื่อถือ"
-                )
-            elif tone == "friendly":
-                tone_instruction = (
-                    "ใช้ภาษาที่เป็นกันเอง น้ำเสียงอบอุ่น เหมือนเพื่อนคุยกัน แต่ยังคงให้เกียรติผู้ใช้"
-                )
-            elif tone == "teen":
-                tone_instruction = (
-                    "ใช้ภาษาวัยรุ่น เข้าใจง่าย สนุก และมีความเป็นธรรมชาติ เช่น ใช้คำว่า 'เลยอ่ะ', 'แบบว่า', 'จริงดิ'"
-                )
-            elif tone == "empathetic":
-                tone_instruction = (
-                    "พูดด้วยน้ำเสียงอ่อนโยน อบอุ่น และแสดงความเข้าใจอย่างลึกซึ้งต่อความรู้สึกของผู้ใช้ "
-                    "เหมือนผู้ฟังที่ห่วงใยและตั้งใจรับฟังโดยไม่ตัดสิน"
-                )
+            if detect_suicidal_risk(user_text):
+                tone = "empathetic"
+
+            tone_instruction = TONE_INSTRUCTIONS.get(
+                tone,
+                TONE_INSTRUCTIONS[DEFAULT_TONE]
+            )
 
             # การตั้งค่าทักทายอัตโนมัติ
             if user_text.lower() in ["ทักทายอัตโนมัติ", "ตั้งค่าทักทายอัตโนมัติ"]:
                 if not check_user_consent(user_id):
-                    reply_message(reply_token, "ก่อนอื่นคุณต้องให้ความยินยอมในการเก็บข้อมูลส่วนบุคคลก่อนค่ะ🙏")
+                    reply_message(reply_token, "ก่อนอื่นคุณต้องให้ความยินยอมในการเก็บข้อมูลส่วนบุคคลก่อน🙏")
                     # send_consent_message(reply_token)
                     return jsonify({"status": "ok"})
                 else:
@@ -665,7 +661,7 @@ def webhook():
                     user_states[user_id].pop("ask_greeting", None)
                 elif user_text in ["2", "ไม่", "no"]:
                     save_greeting_permission(user_id, False)
-                    reply_message(reply_token, "คุณไม่ได้อนุญาตให้แชตบอตทักทายคุณค่ะ 💙")
+                    reply_message(reply_token, "คุณไม่ได้อนุญาตให้แชตบอตทักทายคุณ 💙")
                     user_states[user_id].pop("ask_greeting", None)
                 else:
                     reply_message(reply_token, "กรุณาตอบด้วย 1 = ใช่ หรือ 2 = ไม่")
@@ -677,11 +673,11 @@ def webhook():
                 return jsonify({"status": "ok"})
             if user_text.lower() in ["ถอนความยินยอม", "ยกเลิกการยินยอม"]:
                 save_consent_to_db(user_id, False)
-                reply_message(reply_token, "คุณได้ถอนความยินยอมแล้ว ข้อมูลของคุณจะไม่ถูกเก็บต่อไปค่ะ 🩵")
+                reply_message(reply_token, "คุณได้ถอนความยินยอมแล้ว ข้อมูลของคุณจะไม่ถูกเก็บต่อไป 🩵")
                 return jsonify({"status": "ok"})
             
             if user_text.lower() in ["นัดหมายผู้เชี่ยวชาญ", "จองคิว", "นัดหมาย"]:
-                reply_message(reply_token, "คุณสามารถนัดหมายผู้เชี่ยวชาญได้ที่นี่ค่ะ: https://appointment-website-nine.vercel.app/login")
+                reply_message(reply_token, "คุณสามารถนัดหมายผู้เชี่ยวชาญได้ที่นี่: https://appointment-website-nine.vercel.app/login")
                 return jsonify({"status": "ok"})
             
             # การทำแบบประเมิน DASS-21 
@@ -691,7 +687,7 @@ def webhook():
                     if not is_valid_fullname(user_text):
                         reply_message(
                             reply_token,
-                            "กรุณากรอกชื่อและนามสกุลให้ถูกต้องค่ะ (ตัวอักษรไทย และต้องมีอย่างน้อย 2 คำ ตัวอย่าง: สมชาย ใจดี)"
+                            "กรุณากรอกชื่อและนามสกุลให้ถูกต้อง (ตัวอักษรไทย และต้องมีอย่างน้อย 2 คำ ตัวอย่าง: สมชาย ใจดี)"
                         )
                         return jsonify({"status": "ok"})
                     user_info[user_id] = {"name": user_text.strip()}
@@ -757,7 +753,7 @@ def webhook():
 
                 # หากยินยอม → ขอชื่อ
                 user_states[user_id] = {"awaiting_name": True}
-                reply_message(reply_token, "ก่อนเริ่มแบบประเมิน กรุณาพิมพ์ชื่อของคุณค่ะ:")
+                reply_message(reply_token, "ก่อนเริ่มแบบประเมิน กรุณาพิมพ์ชื่อของคุณ:")
                 return jsonify({"status": "ok"})
 
             # กรณียกเลิกการทำแบบประเมิน
@@ -788,12 +784,12 @@ def webhook():
                         # print(f"Message from {display_name} ({user_id}): {user_text}")
 
                         if check_user_consent(user_id):
-                            print("User has consent, saving results...")
+                            # print("User has consent, saving results...")
                             d_level, a_level, s_level = save_dass_result(user_id, d, a, s)
                             send_notification(user_id, d_level, a_level, s_level)
 
                         else:
-                            print("No consent — not saving to DB")
+                            # print("No consent — not saving to DB")
                             d_level = get_level("D", d)
                             a_level = get_level("A", a)
                             s_level = get_level("S", s)
@@ -813,13 +809,13 @@ def webhook():
                     current_q = DASS_21[state["index"]]["text"]
                     reply_message(
                         reply_token,
-                        f"กรุณาตอบเป็นตัวเลขเท่านั้นนะ\n\n"
+                        f"กรุณาตอบเป็นตัวเลขที่กำหนดเท่านั้นนะ\n\n"
                         f" คำถาม:\n{current_q}\n\n"
                         f" 0 = ไม่เคย\n"
                         f" 1 = เป็นบางครั้ง\n"
                         f" 2 = เป็นบ่อยครั้ง\n"
                         f" 3 = เป็นประจำ\n\n"
-                        f"หากต้องการยกเลิกแบบประเมิน พิมพ์ว่า 'ยกเลิก' หรือ 'ออก'"
+                        f"ถ้าพิมพ์นอกเหนือแชตบอตจะไม่ตอบกลับ หากต้องการยกเลิกแบบประเมิน พิมพ์ว่า 'ยกเลิก' หรือ 'ออก'"
                     )
                 return jsonify({"status": "ok"})
             
@@ -829,6 +825,11 @@ def webhook():
 
             #แปลง array เป็น string
             context = "\n".join([doc[0] for doc in retrieved_docs])if retrieved_docs else "ไม่มีข้อมูลที่เกี่ยวข้อง"
+            # context = "\n".join(
+            #     [doc["content"] for doc in retrieved_docs if doc["score"] ]
+            # )
+
+            # print("Context for user", user_id, ":", context)
 
             #จัดรูปประวิติสนทนา
             if user_id not in chat_histories:
@@ -841,59 +842,64 @@ def webhook():
             history_text = format_history(chat_histories[user_id])
             # print("history_Text : "+ history_text)
 
-            prompt = (
-                "คุณคือแชตบอตทำหน้าที่เป็นที่ปรึกษาด้านสุขภาพจิต\n"
-                f"สไตล์การพูด: {tone_instruction}\n"
-                "รูปแบบคำตอบ: สั้น กระชับ ตรงประเด็น ไม่ใช้อีโมจิ ไม่วกวน\n"
-                "ตอบตามคำถามของผู้ใช้โดยตรง หากจำเป็นจึงค่อยใช้บริบทหรือประวัติการสนทนา\n"
-                "หากไม่มีข้อมูล ให้ตอบตามความเข้าใจแบบเรียบง่าย\n"
-                "หากคำถามอยู่นอกหัวข้อสุขภาพจิต ให้ปฏิเสธอย่างสุภาพว่าไม่สามารถให้คำแนะนำนอกขอบเขตได้\n"
-                "หากไม่แน่ใจในคำตอบ กรุณาบอกว่าไม่แน่ใจอย่างสุภาพ\n\n"
+            PROFESSIONAL_INFO_CONTEXT = (
+                "ข้อมูลสำหรับตอบคำถามเรื่องการเข้าพบผู้เชี่ยวชาญด้านสุขภาพจิต:\n"
+                "- สามารถนัดหมายพูดคุยกับศูนย์ให้คำปรึกษามหาวิทยาลัยพะเยา ผ่านทางริชเมนูของ LINE\n"
+                "- สายด่วนสุขภาพจิต 1323 (ให้บริการตลอด 24 ชั่วโมง)\n"
+                "- โรงพยาบาลหรือสถานพยาบาลใกล้คุณ\n"
+                "- ห้ามวินิจฉัยอาการของผู้ใช้\n"
+                "- ห้ามบอกว่าผู้ใช้จำเป็นต้องไปพบแพทย์\n"
+                "- ใช้ถ้อยคำเชิงทางเลือก ไม่บังคับ และสุภาพ"
+            )
 
-                "กรณีมีความเสี่ยง:\n"
-                "- หากผู้ใช้พูดถึงความคิดอยากตาย ไม่อยากอยู่ หรือการทำร้ายตัวเอง ให้ตอบด้วยความห่วงใย\n"
-                "- บอกผู้ใช้ว่าเขาไม่ได้อยู่คนเดียว และแนะนำให้ติดต่อสายด่วนสุขภาพจิต 1323 หรือคนที่ไว้ใจ\n"
-                "- ห้ามให้คำแนะนำเกี่ยวกับวิธีการทำร้ายตัวเองโดยเด็ดขาด\n\n"
+            if is_seek_professional_intent(user_text):
+                extra_context = PROFESSIONAL_INFO_CONTEXT
 
-                f"คำถามของผู้ใช้:\n{query_text}\n\n"
-                f"บริบทเพิ่มเติม:\n{context if context else 'ไม่มีข้อมูลที่เกี่ยวข้อง'}\n\n"
-                f"ประวัติการสนทนา:\n{history_text if history_text else 'ยังไม่มีบทสนทนา'}"
-)
+            messages = build_prompt(
+                user_question=query_text,
+                tone_instruction=tone_instruction,
+                context=context,
+                history=history_text,
+                extra_system_context=extra_context
+            )
 
             
-            model = genai.GenerativeModel("models/gemma-3-27b-it")  
-            response = model.generate_content([{"role": "user", "parts": [prompt]}],
-                generation_config={
-                    "temperature": 0.5,           
-                    "top_p": 0.8,
-                    "top_k": 3,
-                    "max_output_tokens": 200
+            # model = genai.GenerativeModel("models/gemma-3-27b-it")  
+            # response = model.generate_content([{"role": "user", "parts": [prompt]}],
+            #     generation_config={
+            #         "temperature": 0.5,           
+            #         "top_p": 0.8,
+            #         "top_k": 3,
+            #         "max_output_tokens": 200
+            #     }
+            # )
+
+            
+            response = requests.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+                    "HTTP-Referer": OPEN_ROUTER_API_URL,
+                    "X-Title": "Mental Health Chatbot"
+                },
+                json={
+                    "model": "google/gemini-2.0-flash-001",
+                    "messages": messages,
+                    "temperature": 0.4
                 }
             )
 
+            reply_text = response.json()["choices"][0]["message"]["content"].strip()
+            # reply_text = response.text.strip()
 
-            
-            # response = requests.post(
-            # url="https://openrouter.ai/api/v1/chat/completions",
-            # headers={
-            #     "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-            #     "HTTP-Referer": f"{OPEN_ROUTER_API_URL}", 
-            #     "X-Title": "Mental Health Chatbot", 
-            # },
-            # data=json.dumps({
-            #     "model": "google/gemini-2.0-flash-lite-001", 
-            #     "messages": [
-            #     {
-            #         "role": "user",
-            #         "content": prompt
-            #     }
-            #     ]
-            # })
+            # response = zai_client.chat.completions.create(
+            #     model="glm-4.7-flash",
+            #     messages=messages,
+            #     temperature=0.4,
+            #     max_tokens=300,
+            #     thinking={"type": "disabled"}
             # )
-
-
-            reply_text = response.text.strip()
-            # reply_text = response.json()["choices"][0]["message"]["content"].strip()
+            # reply_text = response.choices[0].message.content.strip()
 
 
             # บันทึกประวัติใน session
@@ -913,7 +919,7 @@ def webhook():
             chat_histories[user_id] = chat_histories[user_id][-6:]
 
             if not reply_text:
-                reply_text = "ขออภัย ฉันไม่สามารถตอบคำถามนี้ได้ในตอนนี้ค่ะ"
+                reply_text = "ขออภัย ฉันไม่สามารถตอบคำถามนี้ได้ในตอนนี้"
             reply_message(reply_token, reply_text)
 
         return jsonify({"status": "ok"})
@@ -922,6 +928,6 @@ def webhook():
         return jsonify({"status": "error", "message": str(e)}), 500
 
 if __name__ == "__main__":
-    start_scheduler(test_mode=False)  
+    start_scheduler(test_mode=True)  
     app.run(host="0.0.0.0", port=5000)  
 
