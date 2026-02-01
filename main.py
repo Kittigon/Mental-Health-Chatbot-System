@@ -28,7 +28,7 @@ LineToken = os.getenv("LINE_ACCESS_TOKEN")
 LINE_CHANNEL_SECRET = os.getenv("LINE_CHANNEL_SECRET")
 llmEndpoint = os.getenv("LOCAL_LLM_ENDPOINT")
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-OPENROUTER_API_KEY = os.getenv("OPEN_ROUTER_API_KEY")
+OPEN_ROUTER_API_KEY = os.getenv("OPEN_ROUTER_API_KEY")
 OPEN_ROUTER_API_URL = os.getenv("OPEN_ROUTER_API_URL")
 # ZAI_API_KEY = os.getenv("ZAI_API_KEY")
 # ZAI_API_URL = os.getenv("ZAI_API_URL")
@@ -852,6 +852,8 @@ def webhook():
                 "- ใช้ถ้อยคำเชิงทางเลือก ไม่บังคับ และสุภาพ"
             )
 
+            extra_context = None
+
             if is_seek_professional_intent(user_text):
                 extra_context = PROFESSIONAL_INFO_CONTEXT
 
@@ -875,22 +877,35 @@ def webhook():
             # )
 
             
-            response = requests.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={
-                    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-                    "HTTP-Referer": OPEN_ROUTER_API_URL,
-                    "X-Title": "Mental Health Chatbot"
-                },
-                json={
-                    "model": "google/gemini-2.0-flash-001",
-                    "messages": messages,
-                    "temperature": 0.4
-                }
-            )
+            reply_text = "ขออภัย ระบบมีปัญหาชั่วคราว กรุณาลองใหม่อีกครั้งภายหลัง"
 
-            reply_text = response.json()["choices"][0]["message"]["content"].strip()
-            # reply_text = response.text.strip()
+            try:
+                response = requests.post(
+                    "https://openrouter.ai/api/v1/chat/completions",
+                    headers={
+                        "Authorization": f"Bearer {OPEN_ROUTER_API_KEY}",
+                        "HTTP-Referer": OPEN_ROUTER_API_URL,
+                        "X-Title": "Mental Health Chatbot"
+                    },
+                    json={
+                        "model": "google/gemini-2.0-flash-001",
+                        "messages": messages,
+                        "temperature": 0.4
+                    },
+                    timeout=30
+                )
+
+                if response.status_code == 200:
+                    data = response.json()
+                    choices = data.get("choices", [])
+                    if choices:
+                        reply_text = choices[0]["message"].get("content", reply_text).strip()
+                else:
+                    print("OpenRouter error:", response.status_code, response.text)
+
+            except Exception as e:
+                print("LLM error:", e)
+
 
             # response = zai_client.chat.completions.create(
             #     model="glm-4.7-flash",
