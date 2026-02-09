@@ -3,7 +3,7 @@ name: Hourly render ping
 
 on:
   schedule:
-    - cron: '0 * * * *'  # Runs every hour (at minute 0, UTC)
+    - cron: '*/15 * * * *'  # Runs every hour (at minute 0, UTC)
   workflow_dispatch:  # Allows manual triggering
 
 jobs:
