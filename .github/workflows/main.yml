@@ -1,0 +1,15 @@
+# Simulated hourly request to your render project so that the service doesn't go down
+name: Hourly render ping
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # Runs every hour (at minute 0, UTC)
+  workflow_dispatch:  # Allows manual triggering
+
+jobs:
+  curl-website:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Run cURL on Website
+        run: curl -I https://conn-line-python.onrender.com
