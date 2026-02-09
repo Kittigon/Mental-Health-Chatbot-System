@@ -17,6 +17,7 @@ DB_NAME = os.getenv("DB_NAME")
 #  ทักทายตามช่วงเวลา
 def greeting_by_time():
     hour = datetime.datetime.now().hour
+    minute = datetime.datetime.now().minute
 
     if 7 <= hour < 12:
         return "สวัสดีตอนเช้า ขอให้เป็นวันที่สดใสนะ 🌤️"
@@ -109,7 +110,7 @@ def start_scheduler(test_mode=False):
         print(" Scheduler started in TEST MODE (every 30 seconds)")
     else:
         #  สำหรับใช้งานจริง
-        scheduler.add_job(auto_greet, "cron", hour="7,12,18")
+        scheduler.add_job(auto_greet, "cron", hour="7,12,18" ,minute=0)
         print(" Scheduler started for production (7, 12, 18)")
 
     scheduler.start()

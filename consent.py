@@ -166,7 +166,7 @@ def save_profile(line_user_id, name, phone, student_id):
         print("Save Profile Error:", e)
 
 def handle_consent(user_id, consent_value, reply_token):
-    from main import reply_message  # เรียกใช้ฟังก์ชันส่งข้อความจาก main.py
+    from main import reply_message
     try:
         conn = db_pool.getconn()
         cur = conn.cursor()
@@ -177,43 +177,69 @@ def handle_consent(user_id, consent_value, reply_token):
 
         if row:
             last_consent, granted_at = row
-            # cooldown 5 วินาที
+
+            # cooldown 30 วินาที
             if granted_at and (now - granted_at).total_seconds() < 30:
-                reply_message(reply_token, "คุณกดเร็วเกินไป กรุณารอสักครู่")
+                reply_message(reply_token, "คุณกดเร็วเกินไป กรุณารอสักครู่นะคะ")
                 cur.close()
                 db_pool.putconn(conn)
                 return
 
-            # ถ้า consent_value เหมือนเดิม ไม่ต้อง update
+            # เลือกเหมือนเดิม
             if last_consent == consent_value:
-                reply_message(reply_token,
-                            "ท่านได้ให้ความยินยอมเรียบร้อยแล้ว" if consent_value else "ท่านได้เลือกปฎิเสธการยินยอม ระบบจะไม่เก็บข้อมูลส่วนบุคคลของท่าน")
+                if consent_value:
+                    reply_message(
+                        reply_token,
+                        "คุณได้ยินยอมให้เก็บข้อมูลการสนทนาไว้แล้วค่ะ "
+                    )
+                else:
+                    reply_message(
+                        reply_token,
+                        "คุณได้เลือกไม่ยินยอมให้เก็บข้อมูลการสนทนาไว้แล้วค่ะ"
+                    )
                 cur.close()
                 db_pool.putconn(conn)
                 return
 
-        # ถ้ายังไม่มี record ให้ insert ใหม่
+        # บันทึกสถานะใหม่
         save_consent_to_db(user_id, consent_value)
 
         if consent_value:
-            reply_message(reply_token,
-                "ท่านได้ยินยอมให้เก็บข้อมูลเรียบร้อยแล้ว\n\n"
-                "ต่อไปนี้คุณสามารถเลือกการตั้งค่าเพิ่มเติมได้เลย:\n\n"
-                "1) หากคุณต้องการให้แชตบอตทักทายคุณโดยอัตโนมัติเมื่อเริ่มสนทนา\n"
-                "2) หากคุณต้องการกำหนดโทนการสนทนาของแชตบอต (เช่น อบอุ่น, เป็นทางการ, สนุกสนาน)\n"
-                "3) หากคุณต้องการทำแบบประเมิน DASS-21 เพื่อตรวจระดับสภาวะเครียด วิตกกังวล และซึมเศร้า\n\n"
-                
-                "สามารถเลือกผ่านการตั้งค่าแชตบอตเมนูด้านล่างได้เลย คุณสามารถเลือกทำข้อใดก่อนก็ได้ "
+            reply_message(
+                reply_token,
+                "ขอบคุณค่ะ \n\n"
+                "คุณได้ยินยอมให้แชตบอตเก็บข้อมูลการสนทนา "
+                "เพื่อใช้ในการปรับปรุงคุณภาพการให้คำแนะนำ "
+                "และการตั้งค่าประสบการณ์การใช้งาน เช่น โทนการสนทนาและการทักทายอัตโนมัติ\n\n"
+
+                " คุณยังสามารถใช้งานแชตบอตได้ตามปกติทุกฟีเจอร์\n"
+                " สำหรับการทำแบบประเมินสุขภาพจิต (DASS-21) "
+                "ระบบจะขอความยินยอมแยกต่างหากทุกครั้งก่อนเริ่มทำแบบประเมิน\n\n"
+
+                "คุณสามารถปรับเปลี่ยนการยินยอมนี้ได้ตลอดเวลาผ่านเมนูการตั้งค่า"
             )
         else:
-            reply_message(reply_token, "รับทราบ ระบบจะไม่เก็บข้อมูลส่วนบุคคลของคุณ และหากคุณต้องการให้ความยินยอมในการเก็บข้อมูล ท่านสามารถเปลี่ยนแปลงได้ทุกเมื่อ ที่เมนูด้านล่าง ")
+            reply_message(
+                reply_token,
+                "รับทราบค่ะ \n\n"
+                "แชตบอตจะไม่ทำการบันทึกข้อมูลการสนทนาของคุณ "
+                "แต่คุณยังสามารถพูดคุยกับแชตบอต "
+                "และใช้งานฟีเจอร์ต่าง ๆ ได้ตามปกติ\n\n"
+
+                " หากภายหลังคุณต้องการให้ความยินยอม "
+                "สามารถเปลี่ยนแปลงได้ทุกเมื่อผ่านเมนูการตั้งค่า"
+            )
 
         cur.close()
         db_pool.putconn(conn)
 
     except Exception as e:
         print("Error handle_consent:", e)
-        reply_message(reply_token, "เกิดข้อผิดพลาดในการบันทึกความยินยอม กรุณาลองใหม่อีกครั้งค่ะ")
+        reply_message(
+            reply_token,
+            "ขออภัย เกิดข้อผิดพลาดในการบันทึกการยินยอม "
+            "กรุณาลองใหม่อีกครั้งในภายหลังนะคะ"
+        )
 
 #--------------------------------------------------------------------------------------------------------------
 # if data_postback.startswith("consent="):
