@@ -3,7 +3,8 @@ import os
 from dotenv import load_dotenv
 import psycopg2
 from apscheduler.schedulers.background import BackgroundScheduler
-
+from dass_reminder import check_dass_reminder
+from line_messaging import push_message
 load_dotenv()
 
 # ดึงค่าจาก .env
@@ -12,7 +13,6 @@ DB_PASSWORD = os.getenv("DB_PASSWORD")
 DB_HOST = os.getenv("DB_HOST")
 DB_PORT = os.getenv("DB_PORT")
 DB_NAME = os.getenv("DB_NAME")
-
 
 #  ทักทายตามช่วงเวลา
 def greeting_by_time():
@@ -91,8 +91,6 @@ def update_last_greeted(user_id):
 
 # ฟังก์ชันทักทายอัตโนมัติ
 def auto_greet():
-    from main import push_message  # เรียกใช้ฟังก์ชันส่งข้อความจาก main.py
-    
     users = get_all_users_to_greet()
     message = greeting_by_time()
     for user_id in users:
@@ -111,6 +109,7 @@ def start_scheduler(test_mode=False):
     else:
         #  สำหรับใช้งานจริง
         scheduler.add_job(auto_greet, "cron", hour="7,12,18" ,minute=0)
+        scheduler.add_job(check_dass_reminder, "interval", seconds=60)
         print(" Scheduler started for production (7, 12, 18)")
 
     scheduler.start()

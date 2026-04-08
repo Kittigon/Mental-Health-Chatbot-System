@@ -4,7 +4,7 @@ import base64
 from flask import Flask, request, jsonify , abort
 import requests
 from query_postgresql import query_postgresql 
-from question import DASS_21 , DASS_choices , summaryScore , save_dass_result , get_level , send_notification
+from question import DASS_21 , DASS_choices , summaryScore , save_dass_result , get_level , send_notification , check_dass_cooldown , log_dass_taken ,can_use_override , save_dass_answer 
 from dotenv import load_dotenv
 import os
 import google.generativeai as genai
@@ -18,6 +18,7 @@ import json
 from tone_config import TONE_INSTRUCTIONS, DEFAULT_TONE
 from safety import detect_suicidal_risk , is_seek_professional_intent
 from prompt_builder import build_prompt
+from line_messaging import push_message
 # from zai import ZaiClient
 
 
@@ -48,33 +49,95 @@ WARN_COOLDOWN = 10
 
 ### ประวัติสนทนา
 chat_histories = {}
-def send_dass_consent(reply_token):
-    reply_message(
-        reply_token,
-        "ก่อนเริ่มแบบประเมิน DASS-21\n"
-        "ขอความยินยอมในการบันทึกผลประเมิน\n\n"
-        "1 = ยินยอม (บันทึกผล)\n"
-        "2 = ไม่ยินยอม (ไม่บันทึกผล)\n\n"
-        "ไม่ว่าคุณจะเลือกแบบใด สามารถทำแบบประเมินได้เหมือนเดิม"
+
+def send_dass_repeat(reply_token, message):
+    headers = {
+        "Authorization": f"Bearer {LineToken}",
+        "Content-Type": "application/json"
+    }
+
+    body = {
+        "replyToken": reply_token,
+        "messages": [
+            {
+                "type": "text",
+                "text": message,
+                "quickReply": {
+                    "items": [
+                        {
+                            "type": "action",
+                            "action": {
+                                "type": "message",
+                                "label": "🔁 ยืนยันทำซ้ำ",
+                                "text": "ยืนยันทำซ้ำ"
+                            }
+                        },
+                        {
+                            "type": "action",
+                            "action": {
+                                "type": "message",
+                                "label": "💬 พูดคุยกับบอต",
+                                "text": "อยากคุยต่อ"
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    requests.post(
+        "https://api.line.me/v2/bot/message/reply",
+        headers=headers,
+        json=body
     )
 
-# ส่งข้อความแบบ Push Message
-def push_message(user_id, text):
-    try:
-        url = "https://api.line.me/v2/bot/message/push"
-        headers = {
-            "Authorization": f"Bearer {LineToken}",
-            "Content-Type": "application/json"
-        }
-        body = {
-            "to": user_id,
-            "messages": [{"type": "text", "text": text}]
-        }
-        res = requests.post(url, headers=headers, json=body)
-        # print("Push message status:", res.status_code)
-        # print("Push message response:", res.text)
-    except Exception as e:
-        print("Error pushing message:", str(e))
+def send_dass_consent(reply_token):
+    headers = {
+        "Authorization": f"Bearer {LineToken}",
+        "Content-Type": "application/json"
+    }
+
+    body = {
+        "replyToken": reply_token,
+        "messages": [
+            {
+                "type": "text",
+                "text": (
+                    "ก่อนเริ่มแบบประเมิน DASS-21\n"
+                    "ขอความยินยอมในการบันทึกผลประเมิน\n\n"
+                    "ไม่ว่าคุณจะเลือกแบบใด สามารถทำแบบประเมินได้เหมือนเดิม\n\n"
+                    "กรุณาเลือกตัวเลือกด้านล่าง:"
+                ),
+                "quickReply": {
+                    "items": [
+                        {
+                            "type": "action",
+                            "action": {
+                                "type": "message",
+                                "label": "ยินยอม (บันทึกผล)",
+                                "text": "ยินยอมบันทึกผล"
+                            }
+                        },
+                        {
+                            "type": "action",
+                            "action": {
+                                "type": "message",
+                                "label": "ไม่ยินยอม (ไม่บันทึก)",
+                                "text": "ไม่ยินยอมบันทึกผล"
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    requests.post(
+        "https://api.line.me/v2/bot/message/reply",
+        headers=headers,
+        json=body
+    )
 
 # จัดรูปแบบประวัติ
 def format_history(history):
@@ -703,7 +766,7 @@ def send_dass_result_flex(reply_token, d, a, s, d_level, a_level, s_level):
                         "color": "#2C3E50",
                         "action": {
                             "type": "message",
-                            "label": "💬 พูดคุยกับบอทต่อ",
+                            "label": "💬 พูดคุยกับบอตต่อ",
                             "text": "อยากคุยต่อ"
                         }
                     },
@@ -730,6 +793,65 @@ def send_dass_result_flex(reply_token, d, a, s, d_level, a_level, s_level):
         "https://api.line.me/v2/bot/message/reply",
         headers=headers,
         json=payload
+    )
+
+# ส่งคำถาม DASS-21 พร้อมตัวเลือกแบบ Quick Reply
+def reply_dass_question(reply_token, question_text):
+    headers = {
+        "Authorization": f"Bearer {LineToken}",
+        "Content-Type": "application/json"
+    }
+
+    body = {
+        "replyToken": reply_token,
+        "messages": [
+            {
+                "type": "text",
+                "text": f"{question_text}\n\nกรุณาเลือกคำตอบ:",
+                "quickReply": {
+                    "items": [
+                        {
+                            "type": "action",
+                            "action": {
+                                "type": "message",
+                                "label": "0 ไม่เคย",
+                                "text": "0"
+                            }
+                        },
+                        {
+                            "type": "action",
+                            "action": {
+                                "type": "message",
+                                "label": "1 บางครั้ง",
+                                "text": "1"
+                            }
+                        },
+                        {
+                            "type": "action",
+                            "action": {
+                                "type": "message",
+                                "label": "2 บ่อยครั้ง",
+                                "text": "2"
+                            }
+                        },
+                        {
+                            "type": "action",
+                            "action": {
+                                "type": "message",
+                                "label": "3 เป็นประจำ",
+                                "text": "3"
+                            }
+                        }
+                    ]
+                }
+            }
+        ]
+    }
+
+    requests.post(
+        "https://api.line.me/v2/bot/message/reply",
+        headers=headers,
+        json=body
     )
 
 
@@ -1007,18 +1129,17 @@ def webhook():
             # การทำแบบประเมิน DASS-21 
             if user_id in user_states:
                 if user_id in user_states and user_states[user_id].get("awaiting_dass_consent"):
-                    if user_text == "1":  # ยินยอมบันทึก DASS
-                        user_states[user_id] = {
-                            "dass_consent": True
-                        }
+                    if user_text == "ยินยอมบันทึกผล":  # ยินยอมบันทึก DASS
+                        user_states[user_id].pop("awaiting_dass_consent", None)
+                        user_states[user_id]["dass_consent"] = True
 
-                        # ต้องกรอกข้อมูลส่วนตัวก่อน
                         if not check_profile(user_id):
                             user_states[user_id]["awaiting_name"] = True
                             reply_message(
                                 reply_token,
                                 "ก่อนเริ่มแบบประเมิน กรุณากรอกข้อมูลเล็กน้อย\n\nพิมพ์ชื่อ-นามสกุลของคุณ:"
                             )
+                        # ต้องกรอกข้อมูลส่วนตัวก่อน
                             return jsonify({"status": "ok"})
 
                         # ถ้ามี profile แล้ว → เริ่ม DASS ได้เลย
@@ -1026,34 +1147,37 @@ def webhook():
 
                         #  แสดงคำถามข้อแรกทันที
                         q = DASS_21[0]["text"]
-                        reply_message(
-                            reply_token,
-                            f"เริ่มแบบประเมิน DASS-21\n\n{q}\n\n"
-                            "0 = ไม่เคย\n1 = เป็นบางครั้ง\n2 = เป็นบ่อยครั้ง\n3 = เป็นประจำ\n\n"
-                            "หากต้องการยกเลิก พิมพ์ว่า 'ยกเลิก'"
-                        )
+                        # reply_message(
+                        #     reply_token,
+                        #     f"เริ่มแบบประเมิน DASS-21\n\n{q}\n\n"
+                        #     "0 = ไม่เคย\n1 = เป็นบางครั้ง\n2 = เป็นบ่อยครั้ง\n3 = เป็นประจำ\n\n"
+                        #     "หากต้องการยกเลิก พิมพ์ว่า 'ยกเลิก'"
+                        # )
+
+                        reply_dass_question(reply_token, f"เริ่มแบบประเมิน DASS-21\n\n{q}\n\nหากต้องการยกเลิกการทำแบบประเมิน พิมพ์ว่า 'ยกเลิก' หรือ 'ออก'")
 
                         return jsonify({"status": "ok"})
 
-                    elif user_text == "2":  # ไม่ยินยอมบันทึก
-                        user_states[user_id] = {
-                            "dass_consent": False,
-                            "index": 0,
-                            "scores": []
-                        }
+                    elif user_text == "ไม่ยินยอมบันทึกผล":  # ไม่ยินยอมบันทึก
+                        user_states[user_id].pop("awaiting_dass_consent", None)
+                        user_states[user_id]["dass_consent"] = False
+                        user_states[user_id]["index"] = 0
+                        user_states[user_id]["scores"] = []
 
                         #  แสดงคำถามข้อแรกทันที
                         q = DASS_21[0]["text"]
-                        reply_message(
-                            reply_token,
-                            f"เริ่มแบบประเมิน DASS-21\n\n{q}\n\n"
-                            "0 = ไม่เคย\n1 = เป็นบางครั้ง\n2 = เป็นบ่อยครั้ง\n3 = เป็นประจำ\n\n"
-                            "หากต้องการยกเลิก พิมพ์ว่า 'ยกเลิก'"
-                        )
+                        # reply_message(
+                        #     reply_token,
+                        #     f"เริ่มแบบประเมิน DASS-21\n\n{q}\n\n"
+                        #     "0 = ไม่เคย\n1 = เป็นบางครั้ง\n2 = เป็นบ่อยครั้ง\n3 = เป็นประจำ\n\n"
+                        #     "หากต้องการยกเลิก พิมพ์ว่า 'ยกเลิก'"
+                        # )
+
+                        reply_dass_question(reply_token, f"เริ่มแบบประเมิน DASS-21\n\n{q}\n\nหากต้องการยกเลิกการทำแบบประเมิน พิมพ์ว่า 'ยกเลิก' หรือ 'ออก'")
 
                         return jsonify({"status": "ok"})
                     else:
-                        reply_message(reply_token, "กรุณาพิมพ์ 1 หรือ 2 เท่านั้น")
+                        reply_message(reply_token, "กรุณาเลือกจากปุ่มที่แสดงด้านล่างเท่านั้น")
                         return jsonify({"status": "ok"})
                     
                 # --- อยู่ในสถานะรอชื่อ ---
@@ -1065,7 +1189,8 @@ def webhook():
                         )
                         return jsonify({"status": "ok"})
                     user_info[user_id] = {"name": user_text.strip()}
-                    user_states[user_id] = {"awaiting_student_id": True}
+                    user_states[user_id].pop("awaiting_name", None)
+                    user_states[user_id]["awaiting_student_id"] = True
                     reply_message(reply_token, "กรุณากรอกรหัสนักศึกษา 8 หลัก: ")
                     return jsonify({"status": "ok"})
                 
@@ -1079,7 +1204,8 @@ def webhook():
                     user_info[user_id]["student_id"] = user_text.strip()
 
                     # ไปต่อ → ขอเบอร์โทร
-                    user_states[user_id] = {"awaiting_phone": True}
+                    user_states[user_id].pop("awaiting_student_id", None)
+                    user_states[user_id]["awaiting_phone"] = True
                     reply_message(reply_token, "กรุณาพิมพ์เบอร์โทรศัพท์ของคุณ (ตัวเลขเท่านั้น):")
                     return jsonify({"status": "ok"})
 
@@ -1099,16 +1225,55 @@ def webhook():
                                 user_info[user_id]["student_id"])
 
                     # เคลียร์สถานะรับข้อมูลส่วนตัว
-                    user_states.pop(user_id, None)
+                    user_states[user_id]["index"] = 0
+                    user_states[user_id]["scores"] = []
+
+                    # ลบเฉพาะ flag ที่ไม่ใช้แล้ว
+                    user_states[user_id].pop("awaiting_phone", None)
+                    user_states[user_id].pop("awaiting_student_id", None)
+                    user_states[user_id].pop("awaiting_name", None)
 
                     # เริ่มทำแบบประเมิน
-                    user_states[user_id] = {"index": 0, "scores": []}
                     q = DASS_21[0]["text"]
-                    reply_message(reply_token,  f"เริ่มแบบประเมิน DASS-21\n\n{q}\n\nตอบโดยพิมพ์ตัวเลข:\n0 = ไม่เคย\n1 = เป็นบางครั้ง\n2 = เป็นบ่อยครั้ง\n3 = เป็นประจำ\n\nหากต้องการยกเลิกการทำแบบประเมิน พิมพ์ว่า 'ยกเลิก' หรือ 'ออก'")
+                    # reply_message(reply_token,  f"เริ่มแบบประเมิน DASS-21\n\n{q}\n\nตอบโดยพิมพ์ตัวเลข:\n0 = ไม่เคย\n1 = เป็นบางครั้ง\n2 = เป็นบ่อยครั้ง\n3 = เป็นประจำ\n\nหากต้องการยกเลิกการทำแบบประเมิน พิมพ์ว่า 'ยกเลิก' หรือ 'ออก'")
+                    reply_dass_question(reply_token, f"เริ่มแบบประเมิน DASS-21\n\n{q}\n\nหากต้องการยกเลิกการทำแบบประเมิน พิมพ์ว่า 'ยกเลิก' หรือ 'ออก'")
                     return jsonify({"status": "ok"})
+            
+            ## กรณีทำซ้ำแบบประเมิน
+            if user_text == "ยืนยันทำซ้ำ":
+                cooldown, _ = check_dass_cooldown(user_id)
+
+                if not cooldown:
+                    reply_message(reply_token, "ขณะนี้คุณสามารถทำแบบประเมินได้ตามปกติ สามารถเลือกที่ริชเมนู 'ทำแบบประเมิน' ได้เลย")
+                    return jsonify({"status": "ok"})
+
+                if not can_use_override(user_id):
+                    reply_message(
+                        reply_token,
+                        "คุณได้ใช้สิทธิ์ทำซ้ำไปแล้ว\n"
+                        "สามารถทำซ้ำได้อีกครั้งใน 24 ชั่วโมง"    
+                    )
+                    return jsonify({"status": "ok"})
+
+                # อนุญาต override
+                user_states[user_id] = {"awaiting_dass_consent": True}
+                send_dass_consent(reply_token)
+                return jsonify({"status": "ok"})
+
+            cooldown, days_left = check_dass_cooldown(user_id)
                     
             # เริ่มต้นทำแบบประเมิน DASS-21
             if user_text.lower() in ["ทำแบบประเมิน", "แบบประเมิน", "เริ่มแบบประเมิน"]:
+                if cooldown:
+                    send_dass_repeat(
+                        reply_token,
+                            f"คุณเพิ่งทำแบบประเมินไป\n"
+                            f"สามารถทำซ้ำได้อีกครั้งในอีก {days_left} วัน\n"
+                            "แนะนำให้เว้นระยะอย่างน้อย 1 สัปดาห์\n\n"
+                            "คุณต้องการทำอย่างไรต่อ?"
+                                            )
+                    return jsonify({"status": "ok"})
+                    
                 user_states[user_id] = {
                     "awaiting_dass_consent": True
                 }
@@ -1137,17 +1302,31 @@ def webhook():
 
                     if index < len(DASS_21):
                         next_q = DASS_21[index]["text"]
-                        reply_message(reply_token, f"{next_q}\n\nตอบโดยพิมพ์ตัวเลข:\n0 = ไม่เคย\n1 = เป็นบางครั้ง\n2 = เป็นบ่อยครั้ง\n3 = เป็นประจำ\n\nหากต้องการยกเลิกการทำแบบประเมิน พิมพ์ว่า 'ยกเลิก' หรือ 'ออก'")
+                        # reply_message(reply_token, f"{next_q}\n\nตอบโดยพิมพ์ตัวเลข:\n0 = ไม่เคย\n1 = เป็นบางครั้ง\n2 = เป็นบ่อยครั้ง\n3 = เป็นประจำ\n\nหากต้องการยกเลิกการทำแบบประเมิน พิมพ์ว่า 'ยกเลิก' หรือ 'ออก'")
+                        reply_dass_question(reply_token, f"{next_q}\n\nหากต้องการยกเลิกการทำแบบประเมิน พิมพ์ว่า 'ยกเลิก' หรือ 'ออก'")
                     else:
                         summary = summaryScore(state["scores"])
                         d, a, s = summary['D'], summary['A'], summary['S']
                         # print(f"Message from {display_name} ({user_id}): {user_text}")
-
+                        
+                        # ถ้ามีค่า dass_ consent ใน state แสดงว่าผู้ใช้ได้ตอบเรื่องการยินยอมไว้แล้ว → ใช้ค่านั้นในการตัดสินใจว่าจะบันทึกผลหรือไม่ 
                         dass_consent = state.get("dass_consent", False)
 
                         if dass_consent:
-                            d_level, a_level, s_level = save_dass_result(user_id, d, a, s)
-                            send_notification(user_id, d_level, a_level, s_level)
+                            try:
+                                result_id , d_level, a_level, s_level = save_dass_result(user_id, d, a, s)
+
+                                for i, answer in enumerate(state["scores"]):
+                                    save_dass_answer(
+                                        result_id=result_id,
+                                        question_number=i+1,
+                                        question_type=answer["type"],
+                                        score=answer["score"]
+                                    )
+                                send_notification(user_id, d_level, a_level, s_level)
+
+                            except Exception as e:
+                                print("Error saving DASS answers:", e)
                         else:
                             d_level = get_level("D", d)
                             a_level = get_level("A", a)
@@ -1164,32 +1343,36 @@ def webhook():
                                     "timestamp": time.time()
                                 }
 
-                            send_dass_result_flex(
+                        send_dass_result_flex(
                             reply_token,
                             d, a, s,
                             d_level, a_level, s_level
                             )
 
-                            reply_message(reply_token, "ถ้าคุณอยากเล่าความรู้สึกเพิ่มเติมจากผลเมื่อสักครู่ ฉันพร้อมฟังนะ")
+                        try:
+                            log_dass_taken(user_id)
+                        except Exception as e:
+                            print("Log error:", e)
 
-                            #  ล้าง state ให้ครบก่อน
-                            user_states[user_id].pop("index", None)
-                            user_states[user_id].pop("scores", None)
-                            user_states[user_id].pop("dass_consent", None)
+                        #  ล้าง state ให้ครบก่อน
+                        user_states[user_id].pop("index", None)
+                        user_states[user_id].pop("scores", None)
+                        user_states[user_id].pop("dass_consent", None)
 
-                            return jsonify({"status": "ok"})
+                        return jsonify({"status": "ok"})
                 else:
                     current_q = DASS_21[state["index"]]["text"]
-                    reply_message(
-                        reply_token,
-                        f"กรุณาตอบเป็นตัวเลขที่กำหนดเท่านั้นนะ\n\n"
-                        f" คำถาม:\n{current_q}\n\n"
-                        f" 0 = ไม่เคย\n"
-                        f" 1 = เป็นบางครั้ง\n"
-                        f" 2 = เป็นบ่อยครั้ง\n"
-                        f" 3 = เป็นประจำ\n\n"
-                        f"ถ้าพิมพ์นอกเหนือแชตบอตจะไม่ตอบกลับ หากต้องการยกเลิกแบบประเมิน พิมพ์ว่า 'ยกเลิก' หรือ 'ออก'"
-                    )
+                    # reply_message(
+                    #     reply_token,
+                    #     f"กรุณาตอบเป็นตัวเลขที่กำหนดเท่านั้นนะ\n\n"
+                    #     f" คำถาม:\n{current_q}\n\n"
+                    #     f" 0 = ไม่เคย\n"
+                    #     f" 1 = เป็นบางครั้ง\n"
+                    #     f" 2 = เป็นบ่อยครั้ง\n"
+                    #     f" 3 = เป็นประจำ\n\n"
+                    #     f"ถ้าพิมพ์นอกเหนือแชตบอตจะไม่ตอบกลับ หากต้องการยกเลิกแบบประเมิน พิมพ์ว่า 'ยกเลิก' หรือ 'ออก'"
+                    # )
+                    reply_dass_question(reply_token, f"กรุณาตอบเป็นตัวเลขที่กำหนดเท่านั้นนะ\n\nคำถาม:\n{current_q}\n\nหากต้องการยกเลิกการทำแบบประเมิน พิมพ์ว่า 'ยกเลิก' หรือ 'ออก'")
                 return jsonify({"status": "ok"})
             
             assessment_context = None

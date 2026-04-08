@@ -2,6 +2,8 @@ import psycopg2
 from dotenv import load_dotenv
 import os   
 import requests
+from datetime import datetime, timedelta
+
 
 # โหลดตัวแปรสภาพแวดล้อมจากไฟล์ .env
 load_dotenv()   
@@ -13,8 +15,15 @@ DB_PORT = os.getenv("DB_PORT")
 DB_NAME = os.getenv("DB_NAME")
 CLOUDFLARE_ACCOUNT_ID = os.getenv("CLOUDFLARE_ACCOUNT_ID")
 CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN") 
+
 # ## สร้างตาราง 
-# conn = psycopg2.connect(Supabase_URL)
+# conn = psycopg2.connect(
+#     dbname=DB_NAME,
+#     user=DB_USER,
+#     password=DB_PASSWORD,
+#     host=DB_HOST,
+#     port=DB_PORT
+# )
 
 # cur = conn.cursor()
 # cur.execute("""
@@ -36,6 +45,61 @@ CLOUDFLARE_API_TOKEN = os.getenv("CLOUDFLARE_API_TOKEN")
 # conn.close()
 
 # print("ตาราง Dass_21_result ถูกสร้างเรียบร้อยแล้ว")
+
+# ### สร้างตาราง Dass_21_log
+# conn = psycopg2.connect(
+#     dbname=DB_NAME,
+#     user=DB_USER,
+#     password=DB_PASSWORD,
+#     host=DB_HOST,
+#     port=DB_PORT
+# )
+
+# cur = conn.cursor()
+# cur.execute("""
+#     CREATE TABLE IF NOT EXISTS Dass_21_log (
+#     id SERIAL PRIMARY KEY,
+#     user_id VARCHAR(100) NOT NULL,
+#     taken_at TIMESTAMPTZ DEFAULT NOW(),
+#     FOREIGN KEY (user_id)
+#         REFERENCES user_consent(line_user_id)
+#         ON DELETE CASCADE
+# );
+# """)
+# conn.commit()
+# cur.close()
+# conn.close()
+
+# print("ตาราง Dass_21_log ถูกสร้างเรียบร้อยแล้ว")
+
+# ### สร้างตาราง Dass_21_log
+# conn = psycopg2.connect(
+#     dbname=DB_NAME,
+#     user=DB_USER,
+#     password=DB_PASSWORD,
+#     host=DB_HOST,
+#     port=DB_PORT
+# )
+
+# cur = conn.cursor()
+# cur.execute("""
+#     CREATE TABLE IF NOT EXISTS dass_21_answer (
+#     id SERIAL PRIMARY KEY,
+#     result_id INT NOT NULL,
+#     question_number INT NOT NULL,
+#     question_type VARCHAR(1) NOT NULL,   -- D / A / S
+#     score INT NOT NULL,
+#     FOREIGN KEY (result_id)
+#         REFERENCES dass_21_result(id)
+#         ON DELETE CASCADE
+# );
+# """)
+# conn.commit()
+# cur.close()
+# conn.close()
+
+# print("ตาราง dass_21_answer ถูกสร้างเรียบร้อยแล้ว")
+
 
 
 
@@ -165,7 +229,7 @@ def get_level(category, score):
         else: return "รุนแรงมาก"
 
 
-
+## บันทึกผลการประเมิน DASS-21 ลงฐานข้อมูล พร้อมคำนวณระดับความเสี่ยง และส่งการแจ้งเตือนไปยังระบบแจ้งเตือน
 def save_dass_result(user_id, d, a, s):
     d_level = get_level("D", d)
     a_level = get_level("A", a)
@@ -179,16 +243,18 @@ def save_dass_result(user_id, d, a, s):
     )
     cur = conn.cursor()
     cur.execute("""
-        INSERT INTO Dass_21_result (
-            user_id, depression_score, anxiety_score, stress_score,
-            depression_level, anxiety_level, stress_level
-        ) VALUES (%s, %s, %s, %s, %s, %s, %s)
+        INSERT INTO dass_21_result 
+        (user_id, depression_score, anxiety_score, stress_score,
+        depression_level, anxiety_level, stress_level)
+        VALUES (%s,%s,%s,%s,%s,%s,%s)
+        RETURNING id
     """, (user_id, d, a, s, d_level, a_level, s_level))
-    conn.commit()
-    cur.close()
-    conn.close()
-    return d_level, a_level, s_level
 
+    result_id = cur.fetchone()[0]
+    conn.commit()
+    return result_id, d_level, a_level, s_level
+
+# คำนวณระดับความเสี่ยงรวมจากระดับของแต่ละหมวดหมู่
 def get_overall_risk(d_level, a_level, s_level):
     levels = [d_level, a_level, s_level]
 
@@ -199,7 +265,7 @@ def get_overall_risk(d_level, a_level, s_level):
     else:
         return "ต่ำ"
 
-
+# ส่งการแจ้งเตือนผลการประเมิน DASS-21 ไปยังระบบแจ้งเตือน
 def send_notification( user_id, d_level, a_level, s_level):
     overall = get_overall_risk(d_level, a_level, s_level)
 
@@ -217,3 +283,134 @@ def send_notification( user_id, d_level, a_level, s_level):
     }
 
     requests.post("https://appointment-website-nine.vercel.app/api/system/notifications/dass-21", json=payload)
+
+
+## บันทึกเวลาล่าสุดในการทำแบบประเมิน DASS-21 ของผู้ใช้ลงฐานข้อมูล
+def log_dass_taken(user_id):
+    conn = psycopg2.connect(
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT
+    )
+    cur = conn.cursor()
+
+    cur.execute("""
+        INSERT INTO Dass_21_log (user_id)
+        VALUES (%s)
+    """, (user_id,))
+
+    conn.commit()
+    cur.close()
+    conn.close()
+
+### ตรวจสอบว่าอยู่ในช่วง cooldown หรือไม่ (7 วันหลังจากทำแบบประเมินครั้งล่าสุด)
+def check_dass_cooldown(user_id):
+    conn = psycopg2.connect(
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT
+    )
+    cur = conn.cursor()
+
+    cur.execute("""
+        SELECT taken_at
+        FROM Dass_21_log
+        WHERE user_id = %s
+        ORDER BY taken_at DESC
+        LIMIT 1
+    """, (user_id,))
+
+    result = cur.fetchone()
+    cur.close()
+    conn.close()
+
+    if not result:
+        return False, 0  # ไม่เคยทำ
+
+    last_taken = result[0]
+    now = datetime.now(last_taken.tzinfo)
+
+    delta = now - last_taken
+    days_passed = delta.days
+
+    if delta < timedelta(days=7):
+        days_left = max(0, 7 - days_passed)
+        return True, days_left
+
+    return False, 0
+
+
+## ตรวจสอบว่าอยู่ในช่วง cooldown ของการใช้ override หรือไม่ (24 ชั่วโมงหลังจากใช้ override ครั้งล่าสุด)
+def can_use_override(user_id):
+    conn = psycopg2.connect(
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT
+    )
+    cur = conn.cursor()
+
+    # ดึงเวลาทำล่าสุด
+    cur.execute("""
+        SELECT taken_at
+        FROM Dass_21_log
+        WHERE user_id = %s
+        ORDER BY taken_at DESC
+        LIMIT 1
+    """, (user_id,))
+
+    result = cur.fetchone()
+
+    if not result:
+        return True  # ไม่เคยทำเลย
+
+    last_taken = result[0]
+    now = datetime.now(last_taken.tzinfo)
+
+    # ถ้าผ่าน 7 วันแล้ว ไม่ต้อง override
+    if now - last_taken >= timedelta(days=7):
+        return True
+
+    # เช็คว่าภายใน 24 ชม. ทำไปแล้วกี่ครั้ง
+    cur.execute("""
+        SELECT COUNT(*)
+        FROM Dass_21_log
+        WHERE user_id = %s
+        AND taken_at >= NOW() - INTERVAL '24 HOURS'
+    """, (user_id,))
+
+    count_24h = cur.fetchone()[0]
+
+    cur.close()
+    conn.close()
+
+    # อนุญาตให้มี 2 ครั้งใน 24 ชม. (ครั้งปกติ + override 1 ครั้ง)
+    if count_24h >= 2:
+        return False
+
+    return True
+
+# บันทึกคำตอบของแต่ละคำถามในแบบประเมิน DASS-21 ลงฐานข้อมูล
+def save_dass_answer(result_id, question_number, question_type, score):
+    conn = psycopg2.connect(
+        dbname=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT
+    )
+    cur = conn.cursor()
+    cur.execute("""
+        INSERT INTO dass_21_answer
+        (result_id, question_number, question_type, score)
+        VALUES (%s,%s,%s,%s)
+    """, (result_id, question_number, question_type, score))
+    conn.commit()
+    cur.close()
+    conn.close()
+    

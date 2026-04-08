@@ -25,20 +25,26 @@ DB_NAME = os.getenv("DB_NAME")
 #     )
 #     cur = conn.cursor()
 
-#     # ตาราง user_consent
+#     # เพิ่มคอลัมน์ last_dass_reminder ถ้ายังไม่มี
 #     cur.execute("""
-#         CREATE TABLE IF NOT EXISTS user_consent (
-#             line_user_id VARCHAR(100) PRIMARY KEY,
-#             name TEXT,
-#             phone TEXT,
-#             student_id VARCHAR(20),
-#             consent BOOLEAN,
-#             granted_at TIMESTAMP,
-#             allow_greeting BOOLEAN DEFAULT FALSE,
-#             last_greeted TIMESTAMP,
-#             tone_style VARCHAR(20) DEFAULT 'friendly'
-#         );
+#         ALTER TABLE user_consent
+#         ADD COLUMN last_dass_reminder TIMESTAMPTZ;
 #     """)
+
+    # ตาราง user_consent
+    # cur.execute("""
+    #     CREATE TABLE IF NOT EXISTS user_consent (
+    #         line_user_id VARCHAR(100) PRIMARY KEY,
+    #         name TEXT,
+    #         phone TEXT,
+    #         student_id VARCHAR(20),
+    #         consent BOOLEAN,
+    #         granted_at TIMESTAMP,
+    #         allow_greeting BOOLEAN DEFAULT FALSE,
+    #         last_greeted TIMESTAMP,
+    #         tone_style VARCHAR(20) DEFAULT 'friendly'
+    #     );
+    # """)
 
 #     # ตาราง chat_history
 #     cur.execute("""
