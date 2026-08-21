@@ -1466,34 +1466,56 @@ def webhook():
             # )
 
             
-            reply_text = "ขออภัย ระบบมีปัญหาชั่วคราว กรุณาลองใหม่อีกครั้งภายหลัง"
+            models = [
+                "google/gemini-2.0-flash-001",
+                "openai/gpt-4o-mini",
+                "qwen/qwen-2.5-72b-instruct"
+                "meta-llama/llama-3.3-70b-instruct",
+            ]
 
-            try:
-                response = requests.post(
-                    "https://openrouter.ai/api/v1/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {OPEN_ROUTER_API_KEY}",
-                        "HTTP-Referer": OPEN_ROUTER_API_URL,
-                        "X-Title": "Mental Health Chatbot"
-                    },
-                    json={
-                        "model": "google/gemini-2.0-flash-001",
-                        "messages": messages,
-                        "temperature": 0.4
-                    },
-                    timeout=30
-                )
+            reply_text = None
 
-                if response.status_code == 200:
-                    data = response.json()
-                    choices = data.get("choices", [])
-                    if choices:
-                        reply_text = choices[0]["message"].get("content", reply_text).strip()
+            for model in models:
+                for attempt in range(3):  # retry 3 ครั้ง
+                    try:
+                        response = requests.post(
+                            "https://openrouter.ai/api/v1/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {OPEN_ROUTER_API_KEY}",
+                                "HTTP-Referer": OPEN_ROUTER_API_URL,
+                                "X-Title": "Mental Health Chatbot"
+                            },
+                            json={
+                                "model": model,
+                                "messages": messages,
+                                "temperature": 0.4
+                            },
+                            timeout=30
+                        )
+
+                        if response.status_code == 200:
+                            data = response.json()
+                            choices = data.get("choices", [])
+                            if choices:
+                                reply_text = choices[0]["message"]["content"].strip()
+                                break
+
+                        elif response.status_code in [429, 504]:
+                            time.sleep(2 ** attempt)  # backoff
+
+                    except Exception as e:
+                        print("LLM error:", e)
+                        time.sleep(2 ** attempt)
+
+                if reply_text:
+                    print(f" ใช้ model: {model}")
+                    break
                 else:
-                    print("OpenRouter error:", response.status_code, response.text)
+                    print(f" model {model} ล้มเหลว → เปลี่ยนตัว")
 
-            except Exception as e:
-                print("LLM error:", e)
+            # fallback สุดท้าย
+            if not reply_text:
+                reply_text = "ขออภัย ระบบมีปัญหาชั่วคราว กรุณาลองใหม่อีกครั้งภายหลัง"
 
 
             # response = zai_client.chat.completions.create(
@@ -1530,6 +1552,11 @@ def webhook():
     except Exception as e:
         print("Error in webhook:", str(e))
         return jsonify({"status": "error", "message": str(e)}), 500
+
+@app.route('/ping', methods=['GET'])
+def ping():
+    """Endpoint for cron-job to ping and keep the server awake."""
+    return "OK", 200
 
 if __name__ == "__main__":
     start_scheduler(test_mode=False)  
