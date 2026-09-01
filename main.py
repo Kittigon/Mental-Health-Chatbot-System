@@ -1469,7 +1469,7 @@ def webhook():
             models = [
                 "google/gemini-2.0-flash-001",
                 "openai/gpt-4o-mini",
-                "qwen/qwen-2.5-72b-instruct"
+                "qwen/qwen-2.5-72b-instruct",
                 "meta-llama/llama-3.3-70b-instruct",
             ]
 

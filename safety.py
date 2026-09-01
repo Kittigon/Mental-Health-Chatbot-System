@@ -8,7 +8,7 @@ RISK_KEYWORDS = [
 
 def detect_suicidal_risk(text):
     text = text.lower()
-    return (word in text for word in RISK_KEYWORDS)
+    return any(word in text for word in RISK_KEYWORDS)
 
 
 SEEK_PROFESSIONAL_KEYWORDS = [
@@ -27,4 +27,4 @@ SEEK_PROFESSIONAL_KEYWORDS = [
 def is_seek_professional_intent(text):
     if not text:
         return False
-    return (keyword in text for keyword in SEEK_PROFESSIONAL_KEYWORDS)
+    return any(keyword in text for keyword in SEEK_PROFESSIONAL_KEYWORDS)
